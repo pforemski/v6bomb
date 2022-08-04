@@ -5,12 +5,16 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Main struct {
 	opt struct {
+		seed int64
+
 		iface string
 		ndp bool
 
@@ -30,23 +34,31 @@ type Main struct {
 
 		window int
 		windu16 uint16
+
+		payload []byte
+
+		n int
+		s int64
 	}
 
-	input chan *SniffPkt
+	input chan *InputPkt
 	inputP sync.Pool
 
-	output chan *WritePkt
+	output chan *OutputPkt
 	outputP sync.Pool
 }
 
 func (M *Main) parseArgs() {
-	flag.IntVar(&dbgLevel, "dbg", 2, "debugging level")
+	flag.IntVar(&dbgLevel, "dbg", 1, "debugging level")
 	flag.BoolVar(&M.opt.ndp, "ndp", false, "answer NDP queries for source prefix")
 	flag.IntVar(&M.opt.window, "window", 16, "TCP window size")
+	flag.Int64Var(&M.opt.seed, "seed", time.Now().UnixNano(), "random seed")
+	flag.IntVar(&M.opt.n, "n", 1, "number of connections to open")
+	flag.Int64Var(&M.opt.s, "s", 1000, "number of miliseconds to sleep")
 	flag.Parse()
 
 	if flag.NArg() < 5 {
-		die("Usage: v6bomb <v6-iface> <src-prefix> <dst-prefix> tcp|udp <port>")
+		die("Usage: v6bomb <v6-iface> <src-prefix> <dst-prefix> tcp|udp <port> [<payload-file>]")
 	}
 
 	args := flag.Args()
@@ -55,6 +67,14 @@ func (M *Main) parseArgs() {
 	M.opt.dst = args[2]
 	M.opt.proto = args[3]
 	M.opt.port = args[4]
+
+	if len(args) > 5 {
+		var err error
+		M.opt.payload, err = os.ReadFile(args[5])
+		if err != nil {
+			dieErr("could not read payload file", err)
+		}
+	}
 
 	switch M.opt.proto {
 	case "tcp":
@@ -90,32 +110,35 @@ func (M *Main) parseArgs() {
 
 func main() {
 	M := new(Main)
-
-	M.input = make(chan *SniffPkt, 10)
+	M.input = make(chan *InputPkt, 10)
 	M.inputP.New = func() any {
-		return new(SniffPkt)
+		return new(InputPkt)
 	}
 
-	M.output = make(chan *WritePkt, 1000) // TODO: len
+	M.output = make(chan *OutputPkt, 1000) // TODO: len
 	M.outputP.New = func() any {
-		return new(WritePkt)
+		return new(OutputPkt)
 	}
 
 	M.parseArgs()
-	dbg(2, "hello world")
+	rand.Seed(M.opt.seed)
 
-	// TODO: real source gen
-	for i := 0; i < 100; i++ {
-		pkt := M.outputP.Get().(*WritePkt)
-		pkt.L3src = append(pkt.L3src, M.opt.srcip...)
-		pkt.L3src[15] = byte(rand.Int63n(256))
-		pkt.L3dst = M.opt.dstip
-		pkt.L4proto = M.opt.protob
+	// init back-end
+	var wgStart, wgStop sync.WaitGroup
+	wgStart.Add(3)
+	wgStop.Add(3)
+	go M.Sniff(&wgStart, &wgStop)
+	go M.Input(&wgStart, &wgStop)
+	go M.Output(&wgStart, &wgStop)
 
-		M.output <- pkt
+	wgStart.Wait()
+	dbg(0, "initialized, sending traffic...")
+
+	M.Generate()
+	dbg(0, "done")
+
+	// TODO: real shut-down?
+	for {
+		time.Sleep(time.Second)
 	}
-
-	go M.Process()
-	go M.Write()
-	M.Sniff()
 }

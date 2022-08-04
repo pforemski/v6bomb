@@ -3,27 +3,48 @@ package main
 import (
 	"encoding/binary"
 	"net"
+	"sync"
 )
 
-// TODO: check if we're NOT receiving what we're sending here
-func (M *Main) Process() {
+func (M *Main) Input(wgStart, wgStop *sync.WaitGroup) {
+	if wgStart != nil {
+		wgStart.Done()
+	}
+
 	for pkt := range M.input {
-		// dbg(0, "received %#v", pkt)
+		// dbg(5, "received %#v", pkt)
 
 		switch pkt.L4proto {
 		case PROTO_ICMP6:
-			M.processIcmp6(pkt)
+			M.handleICMP(pkt)
 		case PROTO_TCP:
-			M.processTcp(pkt)
+			M.handleTCP(pkt)
+		case PROTO_UDP:
+			M.handleUDP(pkt)
 		default:
 			dbg(1, "TODO: process %d", pkt.L4proto)
 		}
 
 		M.inputP.Put(pkt)
 	}
+
+	if wgStop != nil {
+		wgStop.Done()
+	}
+}
+func (M *Main) handleUDP(pkt *InputPkt) {
+	raw := pkt.L4bytes
+	if len(raw) < 8 {
+		return
+	}
+
+	dbg(5, "handling UDP %s -> %s: %x", pkt.L3src, pkt.L3dst, raw[8:])
+	// that's it - drop it :)
+
+	// NB: will return pkt to pool NOW
 }
 
-func (M *Main) processTcp(pkt *SniffPkt) {
+func (M *Main) handleTCP(pkt *InputPkt) {
 	// long enough?
 	raw := pkt.L4bytes
 	if len(raw) < 20 {
@@ -42,23 +63,24 @@ func (M *Main) processTcp(pkt *SniffPkt) {
 		return
 	}
 
-	dbg(5, "TCP %s -> %s: %x\n", pkt.L3src, pkt.L3dst, raw[20:])
+	dbg(5, "handling TCP %s -> %s (seq %d, ack %d): %x",
+		pkt.L3src, pkt.L3dst, seq, ack, raw[20:])
 
 	// reply with an ACK
-	rep := M.outputP.Get().(*WritePkt)
+	rep := M.outputP.Get().(*OutputPkt)
 	rep.L3src = append(rep.L3src[:0], pkt.L3dst...)
 	rep.L3dst = append(rep.L3dst[:0], pkt.L3src...)
 	rep.L4proto = PROTO_TCP
 	rep.L4port = dstport
 	rep.L4seq = ack
 	rep.L4ack = seq + 1
-	rep.L7pay = rep.L7pay[:0]
+	rep.L7pay = M.opt.payload
 	M.output <- rep
 
 	// NB: will return pkt to pool NOW
 }
 
-func (M *Main) processIcmp6(pkt *SniffPkt) {
+func (M *Main) handleICMP(pkt *InputPkt) {
 	// long enough and NDP neighbor disc?
 	if len(pkt.L4bytes) < 4 + 4 + 16 {
 		return
@@ -72,16 +94,16 @@ func (M *Main) processIcmp6(pkt *SniffPkt) {
 		return
 	}
 
-	dbg(5, "NDP %s -> %s // %s -> %s: who-has %s?\n",
-		pkt.L2src, pkt.L2dst, pkt.L3src, pkt.L3dst, tgt)
+	dbg(5, "handling NDP %s -> %s: who-has %s?",
+		pkt.L3src, pkt.L3dst, tgt)
 
 	// reply - NB: copy bytes!
-	rep := M.outputP.Get().(*WritePkt)
+	rep := M.outputP.Get().(*OutputPkt)
 	rep.L2me = pkt.L2me // read-only borrow
 	rep.L3src = append(rep.L3src[:0], tgt...)
 	rep.L3dst = append(rep.L3dst[:0], pkt.L3src...)
 	rep.L4proto = PROTO_ICMP6
-	rep.L7pay = rep.L7pay[:0]
+	rep.L7pay = nil
 	M.output <- rep
 
 	// NB: will return pkt to pool NOW

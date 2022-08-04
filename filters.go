@@ -2,6 +2,8 @@ package main
 
 import "golang.org/x/net/bpf"
 
+// TODO: add TCP[ACK] for TCP?
+// TODO: don't listen to UDP?
 var (
 	// tcpdump -s 100 -dd "inbound and ip6 and ((icmp6 and ip6[40] == 135) or tcp)"
 	filterTcpNdp = []bpf.RawInstruction{

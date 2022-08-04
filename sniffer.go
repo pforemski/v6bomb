@@ -2,12 +2,13 @@ package main
 
 import (
 	"net"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket/pcapgo" // slow but portable
 )
 
-type SniffPkt struct {
+type InputPkt struct {
 	L2me net.HardwareAddr
 	L2src net.HardwareAddr
 	L2dst net.HardwareAddr
@@ -20,7 +21,7 @@ type SniffPkt struct {
 	L4bytes []byte
 }
 
-func (M *Main) Sniff() {
+func (M *Main) Sniff(wgStart, wgStop *sync.WaitGroup) {
 	for inerr := 0; true; time.Sleep(time.Second) {
 		// prepare for listening
 		h, err := pcapgo.NewEthernetHandle(M.opt.iface)
@@ -67,8 +68,13 @@ func (M *Main) Sniff() {
 			dieErr("setting BPF filter failed", err)
 		}
 
+		// we're ready
+		if wgStart != nil {
+			wgStart.Done()
+		}
+
 		// read packets
-		pkt := M.inputP.Get().(*SniffPkt)
+		pkt := M.inputP.Get().(*InputPkt)
 		for {
 			raw, ci, err := h.ZeroCopyReadPacketData()
 			if err != nil {
@@ -116,14 +122,14 @@ func (M *Main) Sniff() {
 			pkt.L3dst = append(pkt.L3dst[:0], raw[off+16:off+32]...)
 			off += 32 // point at pkt.l4bytes
 
-			// check next header
+			// check L4 proto (next-header)
 			switch pkt.L4proto {
 			case M.opt.protob:
 				break
 			case PROTO_ICMP6:
 				if !M.opt.ndp {
 					continue
-				} // else break
+				} // else OK
 			default:
 				continue
 			}
@@ -138,16 +144,35 @@ func (M *Main) Sniff() {
 				continue
 			}
 
+			// check source IP
+			switch {
+			case M.opt.dstp.Contains(pkt.L3src):
+				break
+			case M.opt.ndp && pkt.L4proto == PROTO_ICMP6:
+				break // for NDP, this can be anything, really
+			default:
+				continue
+			}
+
 			// copy what's left, send for processing
 			pkt.L4bytes = append(pkt.L4bytes[:0], raw[off:]...)
 			M.input <- pkt
 
 			// get new packet
-			pkt = M.inputP.Get().(*SniffPkt)
+			pkt = M.inputP.Get().(*InputPkt)
+		}
+
+		// we're not ready anymore
+		if wgStart != nil {
+			wgStart.Add(1)
 		}
 
 		// prepare to re-open
 		h.Close()
+	}
+
+	if wgStop != nil {
+		wgStop.Done()
 	}
 }
 
