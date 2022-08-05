@@ -17,7 +17,7 @@ func (M *Main) Generate() {
 		pkt.L3src[12] = byte(rand.Int63n(256))
 
 		// TODO: support dest net
-		pkt.L3dst = M.opt.dstip
+		pkt.L3dst = append(pkt.L3dst[:0], M.opt.dstip...)
 
 		pkt.L4proto = M.opt.protob
 		pkt.L4port = 0
