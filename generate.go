@@ -7,6 +7,13 @@ import (
 )
 
 func (M *Main) Generate() {
+	s := time.Millisecond * time.Duration(M.opt.s)
+
+	var pay []byte
+	if M.opt.protob == PROTO_UDP {
+		pay = M.opt.payload
+	}
+
 	for i := 0; M.opt.n == 0 || i < M.opt.n; i++ {
 		// target packet mem
 		pkt := M.outputP.Get().(*OutputPkt)
@@ -15,18 +22,16 @@ func (M *Main) Generate() {
 		pkt.L3src = gen_randip(pkt.L3src, M.opt.srcp.IP, M.opt.srcl)
 		pkt.L3dst = gen_randip(pkt.L3dst, M.opt.dstp.IP, M.opt.dstl)
 
-		// proto and port
+		// proto, port, payload
 		pkt.L4proto = M.opt.protob
 		pkt.L4port = 0
-
-		// UDP? send payload in 1st packet
-		if M.opt.protob == PROTO_UDP {
-			pkt.L7pay = M.opt.payload
-		}
+		pkt.L7pay = pay
 
 		// send and wait
 		M.output <- pkt
-		time.Sleep(time.Millisecond * time.Duration(M.opt.s))
+		if s > 0 {
+			time.Sleep(s)
+		}
 	}
 }
 
