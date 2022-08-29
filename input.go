@@ -53,10 +53,16 @@ func (M *Main) handleTCP(pkt *InputPkt) {
 
 	// parse
 	be := binary.BigEndian
+	srcport := be.Uint16(raw[0:2])
 	dstport := be.Uint16(raw[2:4])
 	seq := be.Uint32(raw[4:8])
 	ack := be.Uint32(raw[8:12])
 	flags := raw[13]
+
+	// wrong source port? drop
+	if srcport != M.opt.portn {
+		return
+	}
 
 	// not SYN ACK? drop
 	if flags & 0b00010010 != 0b00010010 {
