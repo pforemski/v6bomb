@@ -2,26 +2,24 @@ package main
 
 import (
 	"math/rand"
+	"net"
 	"time"
 )
 
 func (M *Main) Generate() {
 	for i := 0; M.opt.n == 0 || i < M.opt.n; i++ {
+		// target packet mem
 		pkt := M.outputP.Get().(*OutputPkt)
 
-		// TODO: FIXME
-		pkt.L3src = append(pkt.L3src[:0], M.opt.srcip...)
-		pkt.L3src[15] = byte(rand.Int63n(256))
-		pkt.L3src[14] = byte(rand.Int63n(256))
-		pkt.L3src[13] = byte(rand.Int63n(256))
-		pkt.L3src[12] = byte(rand.Int63n(256))
+		// generate random IPs
+		pkt.L3src = gen_randip(pkt.L3src, M.opt.srcp.IP, M.opt.srcl)
+		pkt.L3dst = gen_randip(pkt.L3dst, M.opt.dstp.IP, M.opt.dstl)
 
-		// TODO: support dest net
-		pkt.L3dst = append(pkt.L3dst[:0], M.opt.dstip...)
-
+		// proto and port
 		pkt.L4proto = M.opt.protob
 		pkt.L4port = 0
 
+		// UDP? send payload in 1st packet
 		if M.opt.protob == PROTO_UDP {
 			pkt.L7pay = M.opt.payload
 		}
@@ -30,4 +28,42 @@ func (M *Main) Generate() {
 		M.output <- pkt
 		time.Sleep(time.Millisecond * time.Duration(M.opt.s))
 	}
+}
+
+func gen_randip(dst, src net.IP, plen int) net.IP {
+	// start verbatim
+	dst = append(dst[:0], src...)
+	if plen == 128 {
+		return dst // done
+	}
+
+	// this can cost
+	r := rand.Int63()
+
+	// handle non-aligned masks
+	i := plen / 8 // starting byte
+	j := plen % 8 // starting bit
+	if j > 0 {
+		m := byte(0xff) << (8 - j) // mask
+		v := dst[i] & m            // what should stay
+		w := byte(r) & (^m)        // new part
+
+		dst[i] = v | w
+		i++
+		j = 0
+		r /= 0xff
+	}
+
+	// fill the rest byte-by-byte
+	for i < 16 {
+		if r == 0 {
+			r = rand.Int63()
+		}
+
+		dst[i] = byte(r)
+		r /= 0xff
+		i++
+	}
+
+	return dst
 }

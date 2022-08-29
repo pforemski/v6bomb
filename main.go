@@ -21,10 +21,12 @@ type Main struct {
 		src string
 		srcip net.IP
 		srcp *net.IPNet
+		srcl int
 
 		dst string
 		dstip net.IP
 		dstp *net.IPNet
+		dstl int
 
 		proto string
 		protob byte
@@ -90,11 +92,13 @@ func (M *Main) parseArgs() {
 	if err != nil {
 		dieErr("invalid source prefix", err)
 	}
+	M.opt.srcl, _ = M.opt.srcp.Mask.Size()
 
 	M.opt.dstip, M.opt.dstp, err = net.ParseCIDR(M.opt.dst)
 	if err != nil {
 		dieErr("invalid destination prefix", err)
 	}
+	M.opt.dstl, _ = M.opt.dstp.Mask.Size()
 
 	v, err := strconv.ParseUint(M.opt.port, 10, 16)
 	if err != nil {
